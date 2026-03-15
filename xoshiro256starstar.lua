@@ -1,9 +1,23 @@
--- xoshiro256**，一种伪随机数生成算法
--- 这也是Lua 5.4自带的math.random使用的算法。
---
--- 本文件是相同算法的纯Lua 5.4实现，但是可以自己创建随机数状态
--- 这样可以摆脱Lua的全局随机数生成状态，以便基于相同的种子进行随机序列复盘。
+-- SPDX-License-Identifier: MIT
 
+-- xoshiro256** is a random generation algorithm which is used by
+-- standard `math.random` function of Lua 5.4.
+--
+-- This file provides pure Lua 5.4 implementation of this algorithm
+-- while allowing creation of individual random states, so you can use
+-- the power of xorshift algorithm without the limit of Lua's
+-- global random state.
+
+-------------------------------
+-- Algorithm implementation
+-- Translated from the source code of Lua 5.4 but only consider 64-bit numbers.
+--
+-- Most comments are copy-pasted too.
+--
+-- see also https://github.com/lua/lua/blob/v5.4/lmathlib.c#L246
+-------------------------------
+
+-- rotate left 'x' by 'n' bits
 local function rotl(x, k)
   return (x << k) | (x >> (64 - k))
 end
@@ -21,10 +35,22 @@ local function next(s)
   return result
 end
 
+-------------------------------
+-- Convert bits from a random integer into a float in the
+-- interval [0,1), getting the higher FIG bits from the
+-- random unsigned integer and converting that to a float.
+-- Some old Microsoft compilers cannot cast an unsigned long
+-- to a floating-point number, so we use a signed long as an
+-- intermediary. When lua_Number is float or double, the shift ensures
+-- that 'sx' is non negative; in that case, a good compiler will remove
+-- the correction.
+-------------------------------
+
 local FIGS = 53
 local shift64_FIG = 64 - FIGS
 local scaleFIG = 0.5 / (1 << (FIGS - 1))
 
+-- I2d, convert 64-bit integers to double.
 local function intToDouble(x)
   local sx = x >> shift64_FIG
   local res = sx * scaleFIG
@@ -47,27 +73,36 @@ local function setseed(s, n1, n2)
   return n1, n2
 end
 
--- 将x投影到[0, n]
+-------------------------------
+-- Project the random integer 'ran' into the interval [0, n].
+-- Because 'ran' has 2^B possible values, the projection can only be
+-- uniform when the size of the interval is a power of 2 (exact
+-- division). Otherwise, to get a uniform projection into [0, n], we
+-- first compute 'lim', the smallest Mersenne number not smaller than
+-- 'n'. We then project 'ran' into the interval [0, lim].  If the result
+-- is inside [0, n], we are done. Otherwise, we try with another 'ran',
+-- until we have a result inside the interval.
+-------------------------------
 local function project(s, x, n)
-  -- 若为2^n-1则位运算
+  -- is 'n + 1' a power of 2?
   if (n & (n + 1)) == 0 then
-    return x & n
+    return x & n  -- no bias
   end
 
   local lim = n
-  -- compute the smallest (2~b - 1) not smaller than 'n'
+  -- compute the smallest (2^b - 1) not smaller than 'n'
   lim = lim | (lim >> 1)
   lim = lim | (lim >> 2)
   lim = lim | (lim >> 4)
   lim = lim | (lim >> 8)
   lim = lim | (lim >> 16)
   lim = lim | (lim >> 32);
-  assert((lim & (lim + 1)) == 0  -- 'lim + 1' is a power of 2,
-    and lim >= n  -- not smaller than 'n',
-    and (lim >> 1) < n)  -- and it is the smallest one
+  assert((lim & (lim + 1)) == 0   -- 'lim + 1' is a power of 2,
+    and lim >= n                  -- not smaller than 'n',
+    and (lim >> 1) < n)           -- and it is the smallest one
 
   while true do
-    -- project 'ran' into [0..lim]
+    -- project 'x' into [0..lim]
     x = x & lim
     if (x <= n) then break end
     x = next(s) -- not inside [0..n]? try again
@@ -95,9 +130,15 @@ local function random(s, m, n)
   return p + low
 end
 
+-------------------------------
+-- API part
+-- Provide a class storing the random state, with the
+-- `randomseed` and `random` method, and export the constructor.
+-------------------------------
+
 local klass = {}
 
--- 可重新初始化随机种子。参见math.randomseed
+-- reinitialize random state, see documentation of `math.randomseed`.
 function klass:randomseed(n1, n2)
   if n1 == nil then
     n1 = math.random(math.maxinteger)
@@ -107,16 +148,16 @@ function klass:randomseed(n1, n2)
   setseed(self, n1, n2)
 end
 
--- 生成伪随机数。与math.random行为一致。
+-- Generate pseudo-random numbers, see documentation of `math.random`.
 --
--- - 无参数：生成[0,1)区间一致分布的伪随机浮点数
--- - 只指定m：生成[1,m]区间内一致分布的伪随机整数
--- - 指定m和n：生成[m,n]区间内一致分布的伪随机整数
+-- - no args: returns a pseudo-random float with uniform distribution in the range [0,1)
+-- - both m and n: returns a pseudo-random integer with uniform distribution in the range [m, n]
+-- - only m: returns a pseudo-random integer with uniform distribution in the range [1, m]
 function klass:random(m, n)
   return random(self, m, n)
 end
 
--- 创建伪随机发生器并可初始化种子。参见math.randomseed
+-- Constructor of the random generator.
 local function newGenerator(x, y)
   local ret = setmetatable({}, { __index = klass })
   ret:randomseed(x, y)
