@@ -3,8 +3,7 @@
 This repo reimplemented the `xoshiro256**` random generation algorithm in Lua,
 which is the algorithm used by `math.random` of original Lua 5.4.
 
-The code is just a "translated version" of [source code of math.random]
-(https://github.com/lua/lua/blob/master/lmathlib.c#L274) to get behavior
+The code is just a "translated version" of [source code of math.random](https://github.com/lua/lua/blob/master/lmathlib.c#L274) to get behavior
 that exactly same as standard `math.random` and `math.randomseed` function.
 
 ## Why do this?
